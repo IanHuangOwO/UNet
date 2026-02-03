@@ -130,8 +130,22 @@ def main():
             logging.warning("Failed to visualize preview: %s", str(e))
     
     batch_size = config.get("training_batch_size", 8)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True, 
+        num_workers=8, 
+        pin_memory=True, 
+        persistent_workers=True
+    )
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        num_workers=8, 
+        pin_memory=True, 
+        persistent_workers=True
+    )
     
     model = get_model(
         model_type=model_config.get("model_type", "monai_unet"),
