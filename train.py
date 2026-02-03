@@ -24,32 +24,6 @@ Model and pipeline
             `--training_resize_factor z y x`.
 - Metrics: Dice+BCE training loss and Dice score logged; curves saved as PNG.
 - Checkpoint: best validation loss saved to `<save_path>/<model_name>.pth`.
-
-Usage 3D:
-python train.py \
-  --img_path ./datas/c-Fos/YYC/training-data/LI-AN-3D/images \
-  --mask_path ./datas/c-Fos/YYC/training-data/LI-AN-3D/masks \
-  --save_path ./datas/c-Fos/YYC/weights \
-  --model_name c-Fos \
-  --training_epochs 100 \
-  --training_batch_size 8 \
-  --training_patch_size 32 32 32 \
-  --training_overlay 0 0 0 \
-  --training_resize_factor 1 1 1 \
-  --visualize_preview
-  
-Usage 2D (Windows caret):
-python train.py ^
-  --img_path ./datas/Lectin/green_computing/training-data/YIN-HSU-3D/images ^
-  --mask_path ./datas/Lectin/green_computing/training-data/YIN-HSU-3D/masks ^
-  --save_path ./datas/Lectin/green_computing/weights/YIN-HSU_RAW ^
-  --model_name YIN-HSU_RAW ^
-  --training_epochs 50 ^
-  --training_batch_size 64 ^
-  --training_patch_size 1 32 32 ^
-  --training_overlay 0 0 0 ^
-  --training_resize_factor 1 1 1 ^
-  --visualize_preview
 """
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -58,129 +32,100 @@ import argparse
 import os
 import sys
 import torch
+import json
 
 from monai.transforms.compose import Compose
 from monai.transforms.utility.dictionary import ToTensord
 from monai.transforms.spatial.dictionary import RandFlipd, RandZoomd, RandAffined
 from monai.transforms.intensity.dictionary import (
-    ScaleIntensityRanged, GaussianSmoothd, NormalizeIntensityd, 
+    ScaleIntensityd, GaussianSmoothd, NormalizeIntensityd, 
     RandAdjustContrastd, RandBiasFieldd, RandShiftIntensityd, RandScaleIntensityd
 )
 from monai.transforms.post.dictionary import AsDiscreted
 from monai.data.dataloader import DataLoader
 
+
 from train.trainer import Trainer
-from models.UNet_2D_V1 import UNet2D
-from models.UNet_3D_V1 import UNet3D
+from models.factory import get_model
 from utils.datasets import MicroscopyDataset
 from utils.loader import load_train_data
 from utils.visualization import visualize_dataset
 
 
 train_transform = Compose([
-    ScaleIntensityRanged(keys=["image"], a_min=0, a_max=50000, b_min=0.0, b_max=1.0, clip=True),
-    NormalizeIntensityd(keys=["image"], nonzero=True , channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
-    # RandFlipd(keys=["image", "mask"], spatial_axis=1, prob=0.5),
+    GaussianSmoothd(keys=["mask"], sigma=0.3),
+    AsDiscreted(keys=["mask"], threshold=0.5),
+    RandFlipd(keys=["image", "mask"], spatial_axis=1, prob=0.5),
     # RandAffined(keys=["image", "mask"], prob=0.5, rotate_range=(0.1, 0.1, 0.1)),
-    # RandAdjustContrastd(keys=["image"], prob=0.3),
-    # RandBiasFieldd(keys=["image"], prob=0.2),
-    # RandShiftIntensityd(keys=["image"], offsets=0.2, prob=0.3),
-    # RandScaleIntensityd(keys=["image"], factors=0.2, prob=0.3),
+    RandAdjustContrastd(keys=["image"], prob=0.3),
+    RandBiasFieldd(keys=["image"], prob=0.2),
+    RandShiftIntensityd(keys=["image"], offsets=0.2, prob=0.3),
+    RandScaleIntensityd(keys=["image"], factors=0.2, prob=0.3),
     # RandZoomd(keys=["image", "mask"], min_zoom=0.9, max_zoom=1.1, prob=0.2),
-    # GaussianSmoothd(keys=["mask"], sigma=1.0),
-    AsDiscreted(keys=["mask"], threshold= 0.5)
+    
 ])
 
 val_transform = Compose([
-    ScaleIntensityRanged(keys=["image"], a_min=0, a_max=50000, b_min=0.0, b_max=1.0, clip=True),
-    NormalizeIntensityd(keys=["image"], nonzero=True , channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
-    # RandAdjustContrastd(keys=["image"], prob=0.3),
-    # RandBiasFieldd(keys=["image"], prob=0.2),
-    # RandShiftIntensityd(keys=["image"], offsets=0.2, prob=0.3),
-    # RandScaleIntensityd(keys=["image"], factors=0.2, prob=0.3),
+    GaussianSmoothd(keys=["mask"], sigma=0.3),
+    AsDiscreted(keys=["mask"], threshold=0.5),
+    RandFlipd(keys=["image", "mask"], spatial_axis=1, prob=0.5),
+    # RandAffined(keys=["image", "mask"], prob=0.5, rotate_range=(0.1, 0.1, 0.1)),
+    RandAdjustContrastd(keys=["image"], prob=0.3),
+    RandBiasFieldd(keys=["image"], prob=0.2),
+    RandShiftIntensityd(keys=["image"], offsets=0.2, prob=0.3),
+    RandScaleIntensityd(keys=["image"], factors=0.2, prob=0.3),
     # RandZoomd(keys=["image", "mask"], min_zoom=0.9, max_zoom=1.1, prob=0.2),
-    # GaussianSmoothd(keys=["mask"], sigma=1.0),
-    AsDiscreted(keys=["mask"], threshold= 0.5) # Already commented out, which is correct.
 ])
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Train 3D or 2D U-Net for Microscopy Segmentation"
     )
-    
     parser.add_argument(
-        "--img_path", type=str, required=True,
-        help="Path to image data"
-    )
-    parser.add_argument(
-        "--mask_path", type=str, required=True,
-        help="Path to mask data"
-    )
-    parser.add_argument(
-        "--save_path", type=str, required=True,
-        help="Directory to save the trained model"
-    )
-    parser.add_argument(
-        "--model_name", type=str, default="best_model", 
-        help="Filename for the saved model"
-    )
-    
-    parser.add_argument(
-        "--training_input_channel", type=int, default=1,
-        help="Number of channels in the input image (e.g., 1 for grayscale, 3 for RGB)."
-    )
-    parser.add_argument(
-        "--training_output_channel", type=int, default=1,
-        help="Number of channels in the model output (e.g., 1 for binary segmentation, >1 for multi-class)."
-    )
-    parser.add_argument(
-        "--training_epochs", type=int, default=30, 
-        help="Number of training epochs (default: 30)"
-    )
-    parser.add_argument(
-        "--training_batch_size", type=int, default=8, 
-        help="Batch size for training (default: 8)"
-    )
-    parser.add_argument(
-        "--training_patch_size", type=int, default=[1, 64, 64], nargs=3, 
-        help="Patch size (z, y, x) for model training. The image is processed in patches of this size."
-    )
-    parser.add_argument(
-        "--training_overlay", type=int, default=[0, 0, 0], nargs=3,
-        help="Number of voxels to overlap (z, y, x) between adjacent patches during inference to avoid edge artifacts."
-    )
-    parser.add_argument(
-        "--training_resize_factor", type=float, default=[1, 1, 1], nargs=3,
-        help="Scaling factor (z, y, x) to resize the input image before training. Use [1,1,1] for no resizing."
-    )
-    parser.add_argument(
-        "--visualize_preview", action="store_true",
-        help="If set, saves preview grids of train/val samples after transforms."
+        "--config", type=str, default="configs/config.json",
+        help="Path to a JSON config file (default: configs/config.json)"
     )
     return parser.parse_args()
     
 def main():
     args = parse_args()
+
+    with open(args.config, 'r') as f:
+        full_config = json.load(f)
+        
+    config = full_config.get("train", {})
+    model_config = full_config.get("model", {})
+
+    img_root = config.get("img_path")
+    mask_root = config.get("mask_path")
+    save_path = config.get("save_path")
+    model_name = config.get("model_name", "best_model")
     
-    img_root = args.img_path
-    mask_root = args.mask_path
-    os.makedirs(args.save_path, exist_ok=True)
+    if not img_root or not mask_root or not save_path:
+        logging.error("Missing mandatory paths in config (img_path, mask_path, or save_path).")
+        return 1
+        
+    os.makedirs(save_path, exist_ok=True)
+
+    # Add file handler to logger
+    log_path = os.path.join(save_path, "train.log")
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logging.getLogger().addHandler(file_handler)
 
     logging.info("Loading image and mask data...")
     
-    training_patch_size = tuple(args.training_patch_size)
-    training_overlay = tuple(args.training_overlay)
-    training_resize_factor = tuple(args.training_resize_factor)
+    training_patch_size = tuple(config.get("training_patch_size", [1, 64, 64]))
+    training_overlay = tuple(config.get("training_overlay", [0, 0, 0]))
+    training_resize_factor = tuple(config.get("training_resize_factor", [1.0, 1.0, 1.0]))
 
-    # Auto-select 2D vs 3D model and dataset based on Z depth
+    # Determine spatial dimensions based on Z depth
     if training_patch_size[0] > 1:
-        SelectedModel = UNet3D
         spatial_dims = 3
         logging.info("Auto-selected 3D model/dataset (patch depth > 1)")
     else:
-        SelectedModel = UNet2D
         spatial_dims = 2
         logging.info("Auto-selected 2D model/dataset (patch depth == 1)")
         
@@ -188,9 +133,9 @@ def main():
     train_patches, val_patches = load_train_data(
         img_path=img_root,
         mask_path=mask_root,
-        patch_size=tuple(training_patch_size),
-        overlay=tuple(training_overlay),
-        resize_factor=tuple(training_resize_factor),
+        patch_size=training_patch_size,
+        overlay=training_overlay,
+        resize_factor=training_resize_factor,
         balance=True,
         val_ratio=0.3,
         seed=100,
@@ -200,19 +145,18 @@ def main():
     val_dataset = MicroscopyDataset(val_patches, transform=val_transform, spatial_dims=spatial_dims, with_mask=True)
 
     # Optional preview of transformed samples
-    if args.visualize_preview:
+    logging.info("Saving dataset preview...")
+    if config.get("visualize_preview", False):
         try:
-            visualize_dataset(train_dataset, title="Train samples")
+            visualize_dataset(train_dataset, title="train_samples_preview", save_path=save_path)
+            visualize_dataset(val_dataset, title="validation_samples_preview", save_path=save_path)
         except Exception as e:
-            logging.warning("Failed to visualize train preview: %s", str(e))
-        try:
-            visualize_dataset(val_dataset, title="Val samples")
-        except Exception as e:
-            logging.warning("Failed to visualize val preview: %s", str(e))
+            logging.warning("Failed to visualize preview: %s", str(e))
     
+    batch_size = config.get("training_batch_size", 8)
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.training_batch_size,
+        batch_size=batch_size,
         shuffle=True,
         num_workers=8,
         pin_memory=True,
@@ -221,7 +165,7 @@ def main():
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.training_batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=8,
         pin_memory=True,
@@ -229,21 +173,31 @@ def main():
         persistent_workers=True,
     )
     
-    model = SelectedModel(in_channels=args.training_input_channel, out_channels=args.training_output_channel)
+    model = get_model(
+        model_type=model_config.get("model_type", "monai_unet"),
+        spatial_dims=spatial_dims,
+        in_channels=model_config.get("in_channels", 1),
+        out_channels=model_config.get("out_channels", 1),
+        channels=model_config.get("channels", (32, 64, 128, 256, 512)),
+        strides=model_config.get("strides", (2, 2, 2, 2)),
+        num_res_units=model_config.get("num_res_units", 2),
+        dropout=model_config.get("dropout", 0.1)
+    )
     
     trainer = Trainer(
         model=model,
         train_loader=train_loader, 
         val_loader=val_loader, 
-        save_path=args.save_path,
-        model_name=args.model_name,
+        save_path=save_path,
+        model_name=model_name,
+        lr=config.get("learning_rate", 1e-4),
+        weight_decay=config.get("weight_decay", 1e-5),
+        epochs=config.get("training_epochs", 30)
     )
 
     logging.info("Starting training...")
-
-    trainer.train(epochs=args.training_epochs)
-
-    logging.info("Training completed. Model saved to %s", args.save_path)
+    trainer.train(epochs=config.get("training_epochs", 30))
+    logging.info("Training completed. Model saved to %s", save_path)
 
 if __name__ == "__main__":
     sys.exit(main())

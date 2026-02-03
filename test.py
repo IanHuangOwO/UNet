@@ -86,42 +86,39 @@ def move_scroll_results_up(mask_dir: Path, volume_name: str) -> None:
         pass
 
 
+import json
+
 def parse_args():
-    p = argparse.ArgumentParser(description="Batch inference over images/<subfolder> using inference.py pipeline")
-    p.add_argument("--input_dir", type=str, required=True, help="Base dataset dir containing images/<subfolder>")
-    p.add_argument("--model_path", type=str, required=True, help="Path to trained model .pth/.pt")
-    p.add_argument("--batch_size", type=int, default=8)
-    p.add_argument("--num_workers", type=int, default=8)
-    # Inference params
-    p.add_argument("--inference_patch_size", type=int, nargs=3, default=[1, 64, 64])
-    p.add_argument("--inference_overlay", type=int, nargs=3, default=[0, 16, 16])
-    p.add_argument("--inference_resize_factor", type=float, nargs=3, default=[1, 1, 1])
-    p.add_argument("--inference_resize_order", type=int, default=0)
-    # Output params mirroring inference.py
-    p.add_argument("--output_type", type=str, default='scroll-tiff', choices=OUTPUT_CHOICES)
-    p.add_argument("--output_dtype", type=str, default='uint16')
-    p.add_argument("--output_chunk_size", type=int, nargs=3, default=[128, 128, 128])
-    p.add_argument("--output_resize_factor", type=int, default=2)
-    p.add_argument("--output_resize_order", type=int, default=0, choices=[0, 1, 3])
-    p.add_argument("--output_n_level", type=int, default=5)
+    p = argparse.ArgumentParser(description="Batch inference over images/<subfolder> using config file")
+    p.add_argument("--config", type=str, default="configs/config.json", help="Path to a JSON config file (default: configs/config.json)")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
 
-    base = Path(args.input_dir)
-    model_stem = Path(args.model_path).stem
+    with open(args.config, 'r') as f:
+        config = json.load(f).get("test", {})
+
+    input_dir = config.get("input_dir")
+    model_path = config.get("model_path")
+    
+    if not input_dir or not model_path:
+        logging.error("Missing mandatory paths in config (input_dir or model_path).")
+        return 1
+
+    base = Path(input_dir)
+    model_stem = Path(model_path).stem
     images_root = base / "images"
     masks_root = base / f"masks_{model_stem}"
 
-    logging.info(f"Loading model: {args.model_path}")
-    model = load_model(args.model_path)
+    logging.info(f"Loading model: {model_path}")
+    model = load_model(model_path)
     inferencer = Inferencer(model)
 
-    inference_patch_size = tuple(args.inference_patch_size)
-    inference_overlay = tuple(args.inference_overlay)
-    inference_resize_factor = tuple(args.inference_resize_factor)
+    inference_patch_size = tuple(config.get("inference_patch_size", [1, 64, 64]))
+    inference_overlay = tuple(config.get("inference_overlay", [0, 16, 16]))
+    inference_resize_factor = tuple(config.get("inference_resize_factor", [1, 1, 1]))
 
     # Choose spatial dims based on depth
     spatial_dims = 3 if inference_patch_size[0] > 1 else 2
@@ -136,6 +133,9 @@ def main() -> int:
         return 1
     logging.info(f"Auto-discovered subfolders: {[p.name for p in subfolders]}")
 
+    batch_size = config.get("batch_size", 8)
+    num_workers = config.get("num_workers", 8)
+
     for sub in subfolders:
         img_path = str(sub)
         mask_path = str(masks_root / sub.name)
@@ -143,18 +143,19 @@ def main() -> int:
 
         logging.info(f"Reading input image from: {img_path}")
         data_reader = FileReader(img_path)
-        output_type = TYPE_MAP.get(args.output_type)
+        output_type_str = config.get("output_type", "scroll-tiff")
+        output_type = TYPE_MAP.get(output_type_str)
         data_writer = FileWriter(
             output_path=mask_path,
             output_name=data_reader.volume_name,
             output_type=output_type,
-            output_dtype=args.output_dtype,
+            output_dtype=config.get("output_dtype", "uint16"),
             full_res_shape=data_reader.volume_shape,
             file_name=data_reader.volume_files,
-            chunk_size=tuple(args.output_chunk_size),
-            resize_factor=args.output_resize_factor,
-            resize_order=args.output_resize_order,
-            n_level=args.output_n_level,
+            chunk_size=tuple(config.get("output_chunk_size", [128, 128, 128])),
+            resize_factor=config.get("output_resize_factor", 2),
+            resize_order=config.get("output_resize_order", 0),
+            n_level=config.get("output_n_level", 5),
         )
 
         logging.info("Inferencing ...")
@@ -176,7 +177,7 @@ def main() -> int:
                 spatial_dims=spatial_dims,
                 with_mask=False,
             )
-            inference_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+            inference_loader = DataLoader(inference_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
             mask_patches = inferencer.eval(inference_loader)
 
@@ -192,7 +193,7 @@ def main() -> int:
 
             data_writer.write(stitched_volume, z_start=z_start, z_end=z_start + stitched_volume.shape[0])
 
-        if output_type in ["scroll-tiff", 'scroll-nii']:
+        if output_type_str in ["scroll-tiff", 'scroll-nii']:
             move_scroll_results_up(Path(mask_path), data_reader.volume_name)
 
     logging.info(f"Finish results under: {masks_root}")

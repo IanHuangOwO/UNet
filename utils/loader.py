@@ -20,6 +20,29 @@ def load_model(model_path: str):
     return model
 
 
+def normalize_volume(volume: np.ndarray) -> np.ndarray:
+    """
+    Perform global intensity normalization on a volume (0 to 1 scaling and Z-score).
+    This ensures that local patches are normalized relative to the whole volume
+    rather than locally, which can confuse the model.
+    """
+    volume = volume.astype(np.float32)
+    
+    # 1. Scale to [0, 1] based on min/max of the whole volume
+    v_min = np.min(volume)
+    v_max = np.max(volume)
+    if v_max > v_min:
+        volume = (volume - v_min) / (v_max - v_min)
+    
+    # 2. Z-score normalization (Zero mean, unit variance)
+    v_mean = np.mean(volume)
+    v_std = np.std(volume)
+    if v_std > 0:
+        volume = (volume - v_mean) / v_std
+        
+    return volume
+
+
 def load_inference_data(
     data_reader,
     z_start: int,
@@ -29,6 +52,10 @@ def load_inference_data(
 ):
     """Extract image-only patches for inference from a FileReader window."""
     data_volume = data_reader.read(z_start=z_start, z_end=z_start + patch_size[0])
+    
+    # Apply global normalization to the chunk before patching
+    data_volume = normalize_volume(data_volume)
+    
     data_patches, data_position = extract_patches(
         array=data_volume,
         patch_size=patch_size,
@@ -67,7 +94,10 @@ def load_train_data(
         mask_folder_path = os.path.join(mask_path, folder_name)
 
         img_reader = FileReader(img_folder_path)
-        img_volume = img_reader.read(z_start=0, z_end=img_reader.volume_shape[0]).astype(np.float32)
+        img_volume = img_reader.read(z_start=0, z_end=img_reader.volume_shape[0])
+        
+        # Apply global normalization to the WHOLE volume before patching
+        img_volume = normalize_volume(img_volume)
 
         mask_reader = FileReader(mask_folder_path)
         mask_volume = mask_reader.read(z_start=0, z_end=mask_reader.volume_shape[0]).astype(np.float32)
@@ -86,12 +116,14 @@ def load_train_data(
 
     # train/val split using numpy (avoids sklearn dependency here)
     n = len(image_patches)
+    print(f"Total patches extracted: {n}")
     idx = np.arange(n)
     rng = np.random.default_rng(seed)
     rng.shuffle(idx)
     val_n = int(n * val_ratio)
     val_idx = idx[:val_n]
     train_idx = idx[val_n:]
+    print(f"Train patches: {len(train_idx)}, Val patches: {len(val_idx)}")
 
     def gather(indices):
         imgs = [image_patches[i] for i in indices]
@@ -107,21 +139,25 @@ def compute_z_plan(volume_depth: int, patch_depth: int, z_overlap: int) -> List[
     assert patch_depth > 0 and z_overlap >= 0
     assert patch_depth > z_overlap
 
+    if volume_depth <= patch_depth:
+        return [(0, 0)]
+
     step = patch_depth - z_overlap
     patches: List[Tuple[int, int]] = []
     z = 0
 
-    while z + patch_depth <= volume_depth:
-        if z + patch_depth == volume_depth:
-            patches.append((z, -1))
-        else:
-            patches.append((z, z_overlap))
+    while z + patch_depth < volume_depth:
+        patches.append((z, z_overlap))
         z += step
 
-    if not patches or patches[-1][1] != -1:
-        last_start = volume_depth - patch_depth
+    # Handle the final chunk to ensure it reaches the exact end of the volume
+    last_start = max(0, volume_depth - patch_depth)
+    if not patches or patches[-1][0] != last_start:
+        # Calculate the actual overlap between the previous chunk and this final one
         if patches:
-            patches[-1] = (patches[-1][0], patches[-1][0] + patch_depth - last_start)
-        patches.append((last_start, -1))
+            prev_start = patches[-1][0]
+            actual_overlap = patch_depth - (last_start - prev_start)
+            patches[-1] = (prev_start, actual_overlap)
+        patches.append((last_start, 0))
 
     return patches

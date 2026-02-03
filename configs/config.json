@@ -1,0 +1,68 @@
+{
+    "model": {
+        "model_type": "monai_unet",
+        "channels": [32, 64, 128],
+        "strides": [2, 2],
+        "num_res_units": 2,
+        "dropout": 0.3,
+        "in_channels": 1,
+        "out_channels": 1
+    },
+    "train": {
+        "learning_rate": 5e-4,
+        "weight_decay": 1e-5,
+        "img_path": "./datas/Lectin/green_computing/training-data/YIN-HSU-3D/images",
+        "mask_path": "./datas/Lectin/green_computing/training-data/YIN-HSU-3D/masks",
+        "save_path": "./output/Lectin/green_computing",
+        "model_name": "test_v0",
+        "training_epochs": 100,
+        "training_batch_size": 8,
+        "training_patch_size": [32, 32, 32],
+        "training_overlay": [0, 0, 0],
+        "training_resize_factor": [1.0, 1.0, 1.0],
+        "visualize_preview": true
+    },
+    "inference": {
+        "input_path": "./datas/Lectin/513790_733920_test",
+        "output_path": "./output/Lectin/20260105",
+        "model_path": "./output/Lectin/20260105/test_v1_epoch_50.pth",
+        "batch_size": 8,
+        "num_workers": 8,
+        "inference_patch_size": [16, 32, 32],
+        "inference_overlay": [2, 4, 4],
+        "inference_resize_factor": [1.0, 1.0, 1.0],
+        "inference_resize_order": 0,
+        "output_type": "scroll-tiff",
+        "output_dtype": "uint16",
+        "output_chunk_size": [128, 128, 128],
+        "output_resize_factor": 2,
+        "output_resize_order": 0,
+        "output_n_level": 5
+    },
+    "test": {
+        "input_dir": "./datas/c-Fos/LI-WIN_PAPER/testing-data/V60",
+        "model_path": "./datas/c-Fos/LI-WIN_PAPER/weights/best_model.pth",
+        "batch_size": 8,
+        "num_workers": 8,
+        "inference_patch_size": [16, 64, 64],
+        "inference_overlay": [2, 4, 4],
+        "inference_resize_factor": [1.0, 1.0, 1.0],
+        "inference_resize_order": 0,
+        "output_type": "scroll-tiff",
+        "output_dtype": "uint16",
+        "output_chunk_size": [128, 128, 128],
+        "output_resize_factor": 2,
+        "output_resize_order": 0,
+        "output_n_level": 5
+    },
+    "converter": {
+        "input_path": "./datas/path/to/input",
+        "output_path": "./output/converted",
+        "output_type": "OME-Zarr",
+        "chunk_size": 128,
+        "downscale_factor": 2,
+        "levels": 5,
+        "resize_order": 0,
+        "memory_limit": 64
+    }
+}

@@ -152,10 +152,13 @@ class FileReader:
             np.ndarray: Array of shape ``(z_end-z_start, y_end-y_start, x_end-x_start)``
             with ``self.volume_dtype``.
         """
-        # 1) defaults
-        z0, z1 = z_start, (self.volume_shape[0] if z_end is None else z_end)
-        y0, y1 = y_start, (self.volume_shape[1] if y_end is None else y_end)
-        x0, x1 = x_start, (self.volume_shape[2] if x_end is None else x_end)
+        # 1) defaults and clamping
+        z0 = max(0, z_start)
+        z1 = min(self.volume_shape[0], self.volume_shape[0] if z_end is None else z_end)
+        y0 = max(0, y_start)
+        y1 = min(self.volume_shape[1], self.volume_shape[1] if y_end is None else y_end)
+        x0 = max(0, x_start)
+        x1 = min(self.volume_shape[2], self.volume_shape[2] if x_end is None else x_end)
 
         logger.info(f"Reading volume z: {z0} - {z1}, y: {y0} - {y1} x: {x0} - {x1}")
         dz = z1 - z0
@@ -163,7 +166,7 @@ class FileReader:
         dx = x1 - x0
 
         if dz <= 0 or dy <= 0 or dx <= 0:
-            return np.empty((max(dz, 0), max(dy, 0), max(dx, 0)), dtype=self.volume_dtype)
+            return np.empty((max(0, dz), max(0, dy), max(0, dx)), dtype=self.volume_dtype)
 
         # 2) find which files overlap this Z-range
         needed = list(self._iter_needed_files(z0, z1))

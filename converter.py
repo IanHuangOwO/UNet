@@ -18,6 +18,7 @@ results incrementally via `IO.writer.FileWriter` to keep memory bounded.
 
 import argparse
 import logging
+import json
 from pathlib import Path
 import numpy as np
 
@@ -29,48 +30,9 @@ logging.basicConfig(
 )
 
 def parse_args():
-    """Parse CLI arguments describing the input volume and desired outputs.
-
-    Returns:
-        argparse.Namespace: Parsed flags including input/output paths,
-            output type, chunk size, pyramid parameters, transpose order,
-            and optional resize settings.
-    """
+    """Parse CLI arguments describing the input volume and desired outputs."""
     parser = argparse.ArgumentParser(description="Convert image volume to multiscale OME-Zarr or other formats.")
-
-    # Positional arguments
-    parser.add_argument("--input_path", type=str, required=True, help="Input file or directory path")
-    parser.add_argument("--output_path", type=str, required=True, help="Output directory for result files")
-    parser.add_argument("--output_type", type=str, required=True, choices=OUTPUT_CHOICES,
-                        help="Specify the output format: OME-Zarr, Zarr, Tif, Scroll-Tif, Nifti, Scroll-Nifti.")
-
-    # File Reader options
-    parser.add_argument("--transpose", type=int, nargs=3, metavar=("AXIS0", "AXIS1", "AXIS2"),
-        help="Axis order to apply with np.transpose, e.g. '--transpose 1 0 2'.",
-    )
-
-    # File Writer options
-    parser.add_argument("--resize-shape", type=int, nargs=3, metavar=("Z", "Y", "X"),
-                        help="Override the full-resolution volume shape")
-    parser.add_argument("--resize-order", type=int, default=0,
-                        help="Interpolation order for resizing: 0=nearest, 1=bilinear etc.")
-
-    # OME options
-    parser.add_argument("--chunk-size", type=int, default=128,
-                        help="Chunk size for Zarr storage")
-    parser.add_argument("--downscale-factor", type=int, default=2,
-                        help="Downsampling factor per pyramid level")
-    parser.add_argument("--levels", type=int, default=5,
-                        help="Number of pyramid levels to generate")
-
-    # Scroll option
-    parser.add_argument("--scroll-axis", type=int, default=0, choices=[0, 1, 2],
-                        help="Axis to scroll and save 2D slices along (0=z, 1=y, 2=x). Default is 0 (z-axis).")
-
-    # Memory limit
-    parser.add_argument("--memory-limit", type=int, default=64,
-                        help="Maximum memory (in GB) for temp buffers")
-
+    parser.add_argument("--config", type=str, required=True, help="Path to a JSON config file")
     return parser.parse_args()
 
 def _write_pyramid(reader: FileReader, args, full_res_shape, chunk_tuple, io_output_type: str) -> bool:
@@ -207,7 +169,73 @@ def main():
     """
     args = parse_args()
 
+    with open(args.config, 'r') as f:
+        config = json.load(f).get("converter", {})
+
+    input_path = config.get("input_path")
+    output_path = config.get("output_path")
+    output_type_str = config.get("output_type")
+
+    if not input_path or not output_path or not output_type_str:
+        logging.error("Missing mandatory arguments in config (input_path, output_path, output_type).")
+        return
+
     logging.info("Starting conversion process.")
+    logging.info(f"Input path: {input_path}")
+    logging.info(f"Output path: {output_path}")
+    logging.info(f"Output type: {output_type_str}")
+
+    memory_limit = config.get("memory_limit", 64)
+    transpose = config.get("transpose")
+    
+    reader = FileReader(
+        input_path=input_path,
+        memory_limit_gb=memory_limit,
+        transpose_order=tuple(transpose) if transpose else None,
+    )
+
+    resize_shape = config.get("resize_shape")
+    full_res_shape = tuple(resize_shape) if resize_shape else reader.volume_shape
+    logging.info(f"Full-resolution shape: {full_res_shape}")
+
+    io_output_type = TYPE_MAP.get(output_type_str)
+    if io_output_type is None:
+        logging.error(f"Unsupported output_type: {output_type_str}")
+        return
+
+    # Ensure output directory exists
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+
+    chunk_size = config.get("chunk_size", 128)
+    chunk_tuple = (chunk_size, chunk_size, chunk_size)
+
+    # Wrap config in a simple Namespace-like object for compatibility with helper functions
+    class ConfigArgs:
+        def __init__(self, **entries):
+            self.__dict__.update(entries)
+    
+    helper_args = ConfigArgs(
+        output_path=output_path,
+        chunk_size=chunk_size,
+        levels=config.get("levels", 5),
+        downscale_factor=config.get("downscale_factor", 2),
+        resize_order=config.get("resize_order", 0),
+        scroll_axis=config.get("scroll_axis", 0)
+    )
+
+    if io_output_type in ["ome-zarr", "zarr"]:
+        if not _write_pyramid(reader, helper_args, full_res_shape, chunk_tuple, io_output_type):
+            return
+    elif io_output_type in ["single-tiff", "single-nii"]:
+        if not _write_single_volume(reader, helper_args, full_res_shape, io_output_type):
+            return
+    elif io_output_type in ["scroll-tiff", "scroll-nii"]:
+        _write_scroll_slices(reader, helper_args, full_res_shape, io_output_type)
+    else:
+        logging.error(f"Unsupported output_type: {output_type_str}")
+        return
+
+    logging.info("Conversion complete.")
     logging.info(f"Input path: {args.input_path}")
     logging.info(f"Output path: {args.output_path}")
     logging.info(f"Output type: {args.output_type}")

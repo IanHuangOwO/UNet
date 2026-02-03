@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+import torch
 from typing import Callable, Dict, List, Optional, Union
 from monai.data.dataset import Dataset
 
@@ -38,20 +40,30 @@ class MicroscopyDataset(Dataset):
         return len(self.patch_dicts)
 
     def __getitem__(self, idx: int):  # type: ignore[override]
-        sample = self.patch_dicts[idx]
+        # Use a copy to avoid modifying the shared patch_dicts during multi-epoch training
+        sample = dict(self.patch_dicts[idx])
 
-        # Apply transform first to keep behavior consistent with existing code
+        # Ensure channel dimension is present before transforms
+        # Most MONAI transforms expect (C, H, W) or (C, D, H, W)
+        for key in ["image", "mask"]:
+            if key in sample:
+                val = sample[key]
+                if hasattr(val, "ndim"):
+                    if self.spatial_dims == 2 and val.ndim == 2:
+                        sample[key] = val[np.newaxis, ...]
+                    elif self.spatial_dims == 3 and val.ndim == 3:
+                        sample[key] = val[np.newaxis, ...]
+
+        # Apply transform
         if self.transform is not None:
             sample = self.transform(sample)
 
         image = sample["image"]
-
-        # Add channel dimension if missing: [H,W] -> [1,H,W] for 2D, [D,H,W] -> [1,D,H,W] for 3D
-        if hasattr(image, "ndim"):
-            if self.spatial_dims == 2 and image.ndim == 2:
-                image = image.unsqueeze(0)
-            elif self.spatial_dims == 3 and image.ndim == 3:
-                image = image.unsqueeze(0)
+        # Ensure it's a tensor after transform if transform didn't do it (though ToTensord usually does)
+        if not hasattr(image, "unsqueeze") and hasattr(image, "ndim"):
+             # It's likely still a numpy array
+             import torch
+             image = torch.from_numpy(image)
 
         if not self.with_mask:
             return image
@@ -60,11 +72,9 @@ class MicroscopyDataset(Dataset):
         if mask is None:
             raise KeyError("Sample is missing required key 'mask' but with_mask=True")
 
-        if hasattr(mask, "ndim"):
-            if self.spatial_dims == 2 and mask.ndim == 2:
-                mask = mask.unsqueeze(0)
-            elif self.spatial_dims == 3 and mask.ndim == 3:
-                mask = mask.unsqueeze(0)
+        if not hasattr(mask, "unsqueeze") and hasattr(mask, "ndim"):
+             import torch
+             mask = torch.from_numpy(mask)
 
         return image, mask
 

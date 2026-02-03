@@ -44,57 +44,41 @@ def stitch_image_xy(patches, positions, original_shape, patch_size, resize_facto
 def stitch_image_z(reconstruction: np.ndarray, prev_z_slices: np.ndarray, threshold=0.5):
     """
     Performs blending across overlapping Z slices between consecutive volume chunks and returns a binary mask.
-
-    Args:
-        reconstruction (np.ndarray): Reconstructed 3D volume (Z, Y, X) for the current chunk.
-        prev_z_slices (np.ndarray or None): Overlapping Z slices from the previous chunk. If None, no blending is performed.
-        threshold (float): Threshold for binarizing the final output mask.
-
-    Returns:
-        np.ndarray: Binary mask (uint8) after Z-slice blending and thresholding, shape (Z, Y, X).
+    All blending is done in logit space.
     """
-    if prev_z_slices is None:
-        return (reconstruction > threshold).astype(np.uint8)
-    else:
-        if len(prev_z_slices.shape) < 3:
-            z_overlay = 1
-        else:
-            z_overlay = prev_z_slices.shape[0]
+    if prev_z_slices is not None:
+        z_overlay = prev_z_slices.shape[0] if prev_z_slices.ndim >= 3 else 1
         
         if prev_z_slices.shape != reconstruction[:z_overlay].shape:
-            raise ValueError(f"Shape mismatch between previous and current Z slices.")
-        reconstruction[:z_overlay] = (
-            reconstruction[:z_overlay] + prev_z_slices
-        ) / 2
+            # If shape mismatch happens due to single slice etc, attempt to handle or raise
+            if prev_z_slices.size == reconstruction[:z_overlay].size:
+                prev_z_slices = prev_z_slices.reshape(reconstruction[:z_overlay].shape)
+            else:
+                raise ValueError(f"Shape mismatch: {prev_z_slices.shape} vs {reconstruction[:z_overlay].shape}")
+        
+        reconstruction[:z_overlay] = (reconstruction[:z_overlay] + prev_z_slices) / 2
 
-    return (reconstruction > threshold).astype(np.uint8)
+    # Apply sigmoid to logits to get probabilities before thresholding
+    probs = 1 / (1 + np.exp(-reconstruction))
+
+    return ((probs > threshold) * 255).astype(np.uint8)
+
 
 def stitch_image(patches, positions, original_shape, patch_size, resize_factor=(1, 1, 1), prev_z_slices=None, z_overlay=0):
     """
     Reconstructs the full 3D volume from patches and blends overlapping Z slices across chunks.
-
-    This function combines XY-plane patch stitching and optional Z-slice blending between chunks.
-    It also returns the last few Z slices (if `z_overlay > 0`) to be used for blending with the next chunk.
-
-    Args:
-        patches (list or np.ndarray): List or array of 3D patches (Z, Y, X).
-        positions (list or np.ndarray): Corresponding (z, y, x) positions for each patch.
-        original_shape (tuple): Shape of the full volume (depth, height, width).
-        patch_size (tuple): Size of each patch (depth, height, width).
-        resize_factor (tuple): Resize factor used during patch extraction.
-        prev_z_slices (np.ndarray or None): Overlapping Z slices from the previous volume chunk.
-        z_overlay (int): Number of Z slices at the end of the current chunk to save for the next blend.
-
-    Returns:
-        tuple:
-            - np.ndarray: Binary mask of the reconstructed volume (Z, Y, X), excluding the last `z_overlay` slices.
-            - np.ndarray or None: The last `z_overlay` slices of the reconstructed volume for use in the next call,
-              or None if `z_overlay == 0`.
     """
     reconstruct_xy = stitch_image_xy(patches, positions, original_shape, patch_size, resize_factor)
-    reconstruction = stitch_image_z(reconstruct_xy, prev_z_slices) # type: ignore
+    
+    # Save the raw logits for the next chunk's overlap BEFORE thresholding
+    next_prev_z = None
+    if z_overlay > 0:
+        next_prev_z = reconstruct_xy[-z_overlay:].copy()
+
+    # stitch_image_z now returns the thresholded mask
+    binary_mask = stitch_image_z(reconstruct_xy, prev_z_slices)
     
     if z_overlay > 0:
-        return reconstruction[:-z_overlay], reconstruction[-z_overlay:]
+        return binary_mask[:-z_overlay], next_prev_z
     else:
-        return reconstruction, None
+        return binary_mask, None

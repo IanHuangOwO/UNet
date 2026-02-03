@@ -10,31 +10,33 @@ def extract_patches(
 ):
     """
     Extracts overlapping 3D patches from an input volume with optional resizing.
-
-    The function slides a window of size `patch_size` over the input `array`, stepping by 
-    `patch_size - overlay` along each dimension. Each patch can optionally be resized 
-    according to `resize_factor`.
-
-    Args:
-        array (np.ndarray): 3D input volume of shape (Z, Y, X).
-        patch_size (tuple): Size of each patch (depth, height, width).
-        overlay (tuple): Number of overlapping voxels between adjacent patches (z, y, x).
-        resize_factor (tuple): Resize factor (z, y, x) for each extracted patch. Default is (1, 1, 1) = no resize.
-        return_positions (bool): If True, also returns the (z, y, x) starting position of each patch.
-
-    Returns:
-        np.ndarray: Array of extracted (and optionally resized) 3D patches.
-        np.ndarray (optional): Array of (z, y, x) positions for each patch if `return_positions=True`.
     """
     D, H, W = array.shape
+    
+    # Pad if array is smaller than patch_size
+    pad_d = max(0, patch_size[0] - D)
+    pad_h = max(0, patch_size[1] - H)
+    pad_w = max(0, patch_size[2] - W)
+    
+    if pad_d > 0 or pad_h > 0 or pad_w > 0:
+        array = np.pad(array, ((0, pad_d), (0, pad_h), (0, pad_w)), mode='reflect')
+        D, H, W = array.shape
+
     patches, positions = [], []
 
-    for z in range(0, D, patch_size[0] - overlay[0]):
+    step_z = max(1, patch_size[0] - overlay[0])
+    step_y = max(1, patch_size[1] - overlay[1])
+    step_x = max(1, patch_size[2] - overlay[2])
+
+    for z in range(0, D, step_z):
         start_z = min(z, D - patch_size[0])
-        for y in range(0, H, patch_size[1] -overlay[1]):
+        if start_z < 0: start_z = 0
+        for y in range(0, H, step_y):
             start_y = min(y, H - patch_size[1])
-            for x in range(0, W, patch_size[2] - overlay[2]):
+            if start_y < 0: start_y = 0
+            for x in range(0, W, step_x):
                 start_x = min(x, W - patch_size[2])
+                if start_x < 0: start_x = 0
                 
                 patch = array[
                     start_z:start_z + patch_size[0],
