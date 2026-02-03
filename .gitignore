@@ -5,7 +5,7 @@ __pycache__/
 *.tif
 *.gz
 *.pth
-#.png
+*.png
 *.csv
 *.xlsx
 .env
