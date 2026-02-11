@@ -33,6 +33,7 @@ from utils.visualization import visualize_dataset
 
 
 train_transform = Compose([
+    NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
     GaussianSmoothd(keys=["mask"], sigma=0.2),
     AsDiscreted(keys=["mask"], threshold=0.5),
@@ -44,6 +45,7 @@ train_transform = Compose([
 ])
 
 val_transform = Compose([
+    NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
     GaussianSmoothd(keys=["mask"], sigma=0.2),
     AsDiscreted(keys=["mask"], threshold=0.5),
