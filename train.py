@@ -18,7 +18,7 @@ from monai.transforms.compose import Compose
 from monai.transforms.utility.dictionary import ToTensord
 from monai.transforms.spatial.dictionary import RandFlipd, RandZoomd, RandAffined
 from monai.transforms.intensity.dictionary import (
-    ScaleIntensityd, GaussianSmoothd, NormalizeIntensityd, 
+    ScaleIntensityd, GaussianSmoothd,
     RandAdjustContrastd, RandBiasFieldd, RandShiftIntensityd, RandScaleIntensityd
 )
 from monai.transforms.post.dictionary import AsDiscreted
@@ -33,7 +33,6 @@ from utils.visualization import visualize_dataset
 
 
 train_transform = Compose([
-    NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
     GaussianSmoothd(keys=["mask"], sigma=0.2),
     AsDiscreted(keys=["mask"], threshold=0.5),
@@ -45,7 +44,6 @@ train_transform = Compose([
 ])
 
 val_transform = Compose([
-    NormalizeIntensityd(keys=["image"], nonzero=True, channel_wise=True),
     ToTensord(keys=["image", "mask"], dtype=torch.float32),
     GaussianSmoothd(keys=["mask"], sigma=0.2),
     AsDiscreted(keys=["mask"], threshold=0.5),
@@ -114,7 +112,7 @@ def main():
         patch_size=training_patch_size,
         overlay=training_overlay,
         resize_factor=training_resize_factor,
-        balance=True,
+        neg_keep_ratio=config.get("training_neg_keep_ratio", 1.0),
         val_ratio=0.3,
         seed=100,
     )

@@ -73,7 +73,7 @@ def load_train_data(
     patch_size: Tuple[int, int, int],
     overlay: Tuple[int, int, int],
     resize_factor: Tuple[float, float, float],
-    balance: bool = True,
+    neg_keep_ratio: float = 1.0,
     *,
     val_ratio: float = 0.3,
     seed: int | None = 42,
@@ -108,7 +108,7 @@ def load_train_data(
             patch_size=patch_size,
             overlay=overlay,
             resize_factor=resize_factor,
-            balance=balance,
+            neg_keep_ratio=neg_keep_ratio,
         )
 
         image_patches.extend(img_p)

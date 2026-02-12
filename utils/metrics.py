@@ -7,7 +7,7 @@ from typing import Dict, Tuple
 # Torch-based Metrics (Used by Trainer)
 # -----------------------------------------------------------------------------
 
-def hard_dice_score(
+def dice_score(
     pred: torch.Tensor,
     target: torch.Tensor,
     smooth: float = 1e-5,

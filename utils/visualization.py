@@ -32,8 +32,8 @@ def _draw_grid(
         squeeze=False
     )
 
-    def process_for_plot(arr):
-        """Squeeze channel and take middle slice if 3D."""
+    def process_for_plot(arr, slice_idx=None):
+        """Squeeze channel and take specified slice if 3D."""
         # Convert torch to numpy if needed
         if hasattr(arr, "detach"):
             arr = arr.detach().cpu().numpy()
@@ -42,9 +42,14 @@ def _draw_grid(
         if arr.ndim > 2 and arr.shape[0] == 1:
             arr = np.squeeze(arr, axis=0)
             
-        # If still 3D (D, H, W), take the middle slice
+        # If still 3D (D, H, W), take the specified slice
         if arr.ndim == 3:
-            arr = arr[arr.shape[0] // 2]
+            if slice_idx is not None:
+                # Ensure index is within bounds
+                idx = min(max(0, slice_idx), arr.shape[0] - 1)
+                arr = arr[idx]
+            else:
+                arr = arr[arr.shape[0] // 2]
             
         return arr
 
@@ -52,21 +57,30 @@ def _draw_grid(
         r = i // cols
         c = (i % cols) * per_sample_cols
         
+        # Determine best slice index from mask (highest sum of signals)
+        m = masks[i]
+        if hasattr(m, "detach"): m = m.detach().cpu().numpy()
+        if m.ndim > 2 and m.shape[0] == 1: m = np.squeeze(m, axis=0)
+        
+        best_slice_idx = None
+        if m.ndim == 3:
+            best_slice_idx = int(np.argmax(np.sum(m, axis=(1, 2))))
+
         # 1. Image
-        img = process_for_plot(images[i])
+        img = process_for_plot(images[i], best_slice_idx)
         axes[r, c].imshow(img, cmap="gray")
-        axes[r, c].set_title(f"S{i} Image")
+        axes[r, c].set_title(f"S{i} Img (Z:{best_slice_idx if best_slice_idx is not None else 'mid'})")
         axes[r, c].axis("off")
         
         # 2. Mask (GT)
-        msk = process_for_plot(masks[i])
+        msk = process_for_plot(masks[i], best_slice_idx)
         axes[r, c+1].imshow(msk, cmap="gray")
         axes[r, c+1].set_title(f"S{i} GT")
         axes[r, c+1].axis("off")
         
         # 3. Prediction (Optional)
         if has_preds:
-            pred = process_for_plot(predictions[i])
+            pred = process_for_plot(predictions[i], best_slice_idx)
             # Apply sigmoid if it looks like raw logits
             if pred.min() < 0 or pred.max() > 1:
                 pred = 1 / (1 + np.exp(-pred)) # sigmoid

@@ -67,46 +67,45 @@ def extract_patches(
     else:
         return np.array(patches)
 
-def balance_patches(image_patches, mask_patches):
+def balance_patches(image_patches, mask_patches, neg_keep_ratio=1.0):
     """
-    Balances a dataset of image and mask patches by ensuring equal numbers of
-    positive (signal-containing) and negative (background-only) samples.
-
-    A patch is considered "positive" if the corresponding mask contains any non-zero values.
+    Balances a dataset of image and mask patches by keeping a specific ratio of negative patches.
 
     Args:
         image_patches (list): List of image patch arrays.
         mask_patches (list): List of corresponding binary mask patch arrays.
+        neg_keep_ratio (float): Ratio of negative patches to keep relative to positive patches (0.0 to 1.0).
+            1.0 means equal numbers of positive and negative (50/50 balance).
+            0.0 means only keep positive patches.
 
     Returns:
-        tuple:
-            np.ndarray: Balanced list of image patches.
-            np.ndarray: Balanced list of corresponding mask patches.
-
-    Note:
-        - The output will have `2 * min(n_positive, n_negative)` total patches.
-        - The result is shuffled randomly.
+        tuple: (np.ndarray, np.ndarray) Balanced image and mask patches.
     """
     positive_patches = []
     negative_patches = []
     
     for img_patch, mask_patch in zip(image_patches, mask_patches):
-        if np.sum(mask_patch) > 0:  # If signal is present
+        if np.sum(mask_patch) > 0:
             positive_patches.append((img_patch, mask_patch))
         else:
             negative_patches.append((img_patch, mask_patch))
 
-    # Balance dataset
-    min_size = min(len(positive_patches), len(negative_patches))
-    
-    positive_patches = positive_patches[:min_size]
-    negative_patches = negative_patches[:min_size]
+    n_pos = len(positive_patches)
+    if n_pos == 0:
+        return np.array(image_patches), np.array(mask_patches)
 
-    balanced_patches = positive_patches + negative_patches
-    np.random.shuffle(balanced_patches)  # Shuffle dataset
+    # Calculate how many negative patches to keep
+    n_keep_neg = int(n_pos * neg_keep_ratio)
+    n_keep_neg = min(n_keep_neg, len(negative_patches))
 
-    image_patches, mask_patches = zip(*balanced_patches)
-    return np.array(image_patches), np.array(mask_patches)
+    np.random.shuffle(negative_patches)
+    selected_negatives = negative_patches[:n_keep_neg]
+
+    balanced_patches = positive_patches + selected_negatives
+    np.random.shuffle(balanced_patches)
+
+    image_out, mask_out = zip(*balanced_patches)
+    return np.array(image_out), np.array(mask_out)
 
 def extract_training_batches(
     image:np.ndarray,
@@ -114,30 +113,13 @@ def extract_training_batches(
     patch_size=(16, 64, 64),
     overlay=(2, 4, 4),
     resize_factor=(1, 1, 1),
-    balance=True
+    neg_keep_ratio=1.0
 ):
     """
-    Extracts training patches from a 3D image and corresponding mask, with optional balancing
-    of positive and negative samples.
-
-    This function extracts patches from both the image and mask using the same settings, then
-    optionally balances them based on signal presence in the mask.
+    Extracts training patches with a controllable ratio of negative (empty) patches.
 
     Args:
-        image (np.ndarray): 3D image array (Z, Y, X).
-        mask (np.ndarray): 3D mask array (same shape as image).
-        patch_size (tuple): Size of each patch (depth, height, width).
-        overlay (tuple): Number of overlapping voxels between patches (z, y, x).
-        resize_factor (tuple): Factor to resize each patch (z, y, x).
-        balance (bool): Whether to balance the number of signal and background patches.
-
-    Returns:
-        tuple:
-            np.ndarray: Image patches.
-            np.ndarray: Corresponding mask patches.
-
-    Raises:
-        ValueError: If `image` and `mask` shapes do not match.
+        neg_keep_ratio (float): How many empty patches to keep relative to positive ones.
     """
     
     if (image.shape != mask.shape):
@@ -146,7 +128,4 @@ def extract_training_batches(
     image_patches = extract_patches(array=image, patch_size=patch_size, overlay=overlay, resize_factor=resize_factor)
     mask_patches = extract_patches(array=mask, patch_size=patch_size, overlay=overlay, resize_factor=resize_factor)
     
-    if balance:
-        return balance_patches(image_patches, mask_patches)
-    else:
-        return image_patches, mask_patches
+    return balance_patches(image_patches, mask_patches, neg_keep_ratio=neg_keep_ratio)

@@ -8,7 +8,7 @@ from typing import Dict, List, Callable, Union, Optional
 from tqdm import tqdm
 
 from utils.visualization import visualize_predictions
-from utils.metrics import hard_dice_score, bce_score
+from utils.metrics import dice_score, bce_score
 
 # Initialize logging
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 MetricFn = Callable[[torch.Tensor, torch.Tensor], Union[torch.Tensor, float]]
 
 METRICS_TO_COMPUTE: Dict[str, MetricFn] = {
-    "dice_score": lambda outputs, targets: hard_dice_score(outputs, targets, from_logits=True),
+    "dice_score": lambda outputs, targets: dice_score(outputs, targets, from_logits=True),
     "bce_score": lambda outputs, targets: bce_score(outputs, targets, from_logits=True),
 }
 
@@ -53,7 +53,9 @@ class Trainer:
         self.model.to(self.device)
 
         self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=epochs)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=5
+        )
 
         # Store history of metrics (including reserved 'loss' key)
         self.metrics_history: Dict[str, Dict[str, List[float]]] = {
@@ -82,7 +84,7 @@ class Trainer:
                 v_val = self.metrics_history[m_name]["val"][-1]
                 logger.info(f"{m_name.replace('_', ' ').capitalize()} -> Train: {t_val:.4f} | Val: {v_val:.4f}")
             
-            self.scheduler.step()
+            self.scheduler.step(val_loss)
             
             # Check for best model
             if val_loss < self.best_val_loss:
