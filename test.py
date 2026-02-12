@@ -68,8 +68,9 @@ def list_subfolders(folder: Path) -> List[Path]:
 
 def move_scroll_results_up(mask_dir: Path, volume_name: str) -> None:
     """If writer created '<mask_dir>/<volume_name>_scroll', move files up to '<mask_dir>' and remove the folder."""
-    scroll_dir = mask_dir / f"{volume_name}_scroll"
+    scroll_dir = mask_dir / f"{volume_name}.scroll-tif"
     if not scroll_dir.exists() or not scroll_dir.is_dir():
+        print(scroll_dir)
         return
     for f in scroll_dir.iterdir():
         if f.is_file():
@@ -143,7 +144,7 @@ def main() -> int:
 
         logging.info(f"Reading input image from: {img_path}")
         data_reader = FileReader(img_path)
-        output_type_str = config.get("output_type", "scroll-tiff")
+        output_type_str = config.get("output_type", "Scroll-Tif")
         output_type = TYPE_MAP.get(output_type_str)
         data_writer = FileWriter(
             output_path=mask_path,
@@ -152,10 +153,6 @@ def main() -> int:
             output_dtype=config.get("output_dtype", "uint16"),
             full_res_shape=data_reader.volume_shape,
             file_name=data_reader.volume_files,
-            chunk_size=tuple(config.get("output_chunk_size", [128, 128, 128])),
-            resize_factor=config.get("output_resize_factor", 2),
-            resize_order=config.get("output_resize_order", 0),
-            n_level=config.get("output_n_level", 5),
         )
 
         logging.info("Inferencing ...")
@@ -177,7 +174,14 @@ def main() -> int:
                 spatial_dims=spatial_dims,
                 with_mask=False,
             )
-            inference_loader = DataLoader(inference_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+            inference_loader = DataLoader(
+                inference_dataset, 
+                batch_size=batch_size, 
+                shuffle=False, 
+                num_workers=num_workers,
+                pin_memory=True, 
+                persistent_workers=True
+            )
 
             mask_patches = inferencer.eval(inference_loader)
 
@@ -193,7 +197,7 @@ def main() -> int:
 
             data_writer.write(stitched_volume, z_start=z_start, z_end=z_start + stitched_volume.shape[0])
 
-        if output_type_str in ["scroll-tiff", 'scroll-nii']:
+        if output_type in ["scroll-tiff", 'scroll-nii']:
             move_scroll_results_up(Path(mask_path), data_reader.volume_name)
 
     logging.info(f"Finish results under: {masks_root}")
