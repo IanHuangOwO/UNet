@@ -17,6 +17,7 @@
         "model_name": "test_v0",
         "training_epochs": 100,
         "training_batch_size": 8,
+        "training_num_workers": 8,
         "training_patch_size": [32, 32, 32],
         "training_overlay": [0, 0, 0],
         "training_resize_factor": [1.0, 1.0, 1.0],

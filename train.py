@@ -132,11 +132,13 @@ def main():
             logging.warning("Failed to visualize preview: %s", str(e))
     
     batch_size = config.get("training_batch_size", 8)
+    num_workers = config.get("training_num_workers", 8)
+    
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=8, 
+        num_workers=num_workers, 
         pin_memory=True, 
         persistent_workers=True
     )
@@ -144,7 +146,7 @@ def main():
         val_dataset, 
         batch_size=batch_size, 
         shuffle=False, 
-        num_workers=8, 
+        num_workers=num_workers, 
         pin_memory=True, 
         persistent_workers=True
     )
