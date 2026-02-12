@@ -70,7 +70,6 @@ def move_scroll_results_up(mask_dir: Path, volume_name: str) -> None:
     """If writer created '<mask_dir>/<volume_name>_scroll', move files up to '<mask_dir>' and remove the folder."""
     scroll_dir = mask_dir / f"{volume_name}.scroll-tif"
     if not scroll_dir.exists() or not scroll_dir.is_dir():
-        print(scroll_dir)
         return
     for f in scroll_dir.iterdir():
         if f.is_file():
