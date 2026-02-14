@@ -1,3 +1,5 @@
+numba
+openpyxl
 zarr
 dask
 imagecodecs

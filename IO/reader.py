@@ -133,8 +133,6 @@ class FileReader:
 
         self._get_volume_info()
 
-        self._cache = {}
-
         logger.info(f"Volume name: {self.volume_name}")
         logger.info(f"Volume shape: {self.volume_shape}")
         logger.info(f"Volume dtype: {self.volume_dtype}")

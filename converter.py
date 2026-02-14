@@ -3,15 +3,6 @@ Command-line entry point for converting large 3D volumes into various
 output formats (OME-Zarr pyramids, flat Zarr, TIFF/NIfTI volumes, and
 per-slice "scroll" exports).
 
-Example
-  python converter.py ^
-    --input_path E:\\Kuo_TH_cFOS_15\\Kuo_TH_v43_auto-488_cfos-561_4X_z4_tiffs_destriped\\Flatten_561_mask ^
-    --output_path E:\\Kuo_TH_cFOS_15\\Kuo_TH_v43_auto-488_cfos-561_4X_z4_tiffs_destriped\\ ^
-    --output_type OME-Zarr ^
-    --chunk-size 128 ^
-    --resize-order 0 ^
-    --resize-shape 2250 10240 7400 ^
-
 The CLI streams the input volume using `IO.reader.FileReader` and writes
 results incrementally via `IO.writer.FileWriter` to keep memory bounded.
 """
@@ -22,7 +13,7 @@ import json
 from pathlib import Path
 import numpy as np
 
-from IO import FileReader, FileWriter, OUTPUT_CHOICES, TYPE_MAP
+from IO import FileReader, FileWriter, TYPE_MAP
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,20 +27,7 @@ def parse_args():
     return parser.parse_args()
 
 def _write_pyramid(reader: FileReader, args, full_res_shape, chunk_tuple, io_output_type: str) -> bool:
-    """Stream the full-resolution volume into a multiscale Zarr layout.
-
-    Args:
-        reader (FileReader): Source volume reader.
-        args (argparse.Namespace): Parsed CLI arguments.
-        full_res_shape (tuple[int, int, int]): Target full-resolution shape (Z, Y, X).
-        chunk_tuple (tuple[int, int, int]): Chunk size used for Zarr arrays.
-        io_output_type (str): Either "ome-zarr" or "zarr".
-
-    Returns:
-        bool: True when the streaming write completes (even if downsampling
-            finalization later fails).
-    """
-
+    """Stream the full-resolution volume into a multiscale Zarr layout."""
     writer = FileWriter(
         output_path=args.output_path,
         output_name=reader.volume_name,
@@ -81,20 +59,9 @@ def _write_pyramid(reader: FileReader, args, full_res_shape, chunk_tuple, io_out
     return True
 
 def _write_single_volume(reader: FileReader, args, full_res_shape, io_output_type: str) -> bool:
-    """Write a single full-resolution output volume for TIFF or NIfTI targets.
-
-    Args:
-        reader (FileReader): Source volume reader.
-        args (argparse.Namespace): Parsed CLI args.
-        full_res_shape (tuple[int, int, int]): Requested full-res output shape.
-        io_output_type (str): One of "single-tiff" or "single-nii".
-
-    Returns:
-        bool: False if a mismatched resize is requested (unsupported here),
-            True after writing otherwise.
-    """
+    """Write a single full-resolution output volume for TIFF or NIfTI targets."""
     if tuple(full_res_shape) != tuple(reader.volume_shape):
-        logging.error("resize-shape currently not supported with IO.writer for single outputs. Use input shape or switch back to utils.* writer for resizing.")
+        logging.error("resize-shape currently not supported for single outputs. Use input shape.")
         return False
 
     writer = FileWriter(
@@ -112,24 +79,17 @@ def _write_single_volume(reader: FileReader, args, full_res_shape, io_output_typ
     return True
 
 def _write_scroll_slices(reader: FileReader, args, full_res_shape, io_output_type: str) -> bool:
-    """Emit individual 2D slices along the selected axis for scroll outputs.
-
-    Args:
-        reader (FileReader): Source volume reader.
-        args (argparse.Namespace): Parsed CLI args; uses ``scroll_axis``.
-        full_res_shape (tuple[int, int, int]): Expected (Z, Y, X) shape.
-        io_output_type (str): "scroll-tiff" or "scroll-nii".
-
-    Returns:
-        bool: False if resize-shape mismatches the input; True otherwise.
-    """
+    """Emit individual 2D slices along the selected axis for scroll outputs."""
     if tuple(full_res_shape) != tuple(reader.volume_shape):
-        logging.error("resize-shape currently not supported with IO.writer for single outputs. Use input shape or switch back to utils.* writer for resizing.")
+        logging.error("resize-shape currently not supported for scroll outputs. Use input shape.")
         return False
-    axis_char = ["z", "y", "x"][args.scroll_axis]
-    num_slices = reader.volume_shape[args.scroll_axis]
-    base = Path(args.output_path) / f"{reader.volume_name}_scroll"
-    file_names = [base / f"{reader.volume_name}_{axis_char}{i:05d}" for i in range(num_slices)]
+        
+    axis = args.scroll_axis
+    axis_char = ["z", "y", "x"][axis]
+    num_slices = reader.volume_shape[axis]
+    
+    # Base names for the slices
+    file_names = [Path(f"{reader.volume_name}_{axis_char}{i:05d}") for i in range(num_slices)]
 
     writer = FileWriter(
         output_path=args.output_path,
@@ -137,13 +97,11 @@ def _write_scroll_slices(reader: FileReader, args, full_res_shape, io_output_typ
         output_type=io_output_type,
         full_res_shape=tuple(reader.volume_shape),
         output_dtype=reader.volume_dtype,
-        file_name=[Path(n) for n in file_names],
+        file_name=file_names,
         input_shape=tuple(reader.volume_shape),
     )
 
-    axis = args.scroll_axis
     axis_length = reader.volume_shape[axis]
-
     axis_handlers = {
         0: lambda start, end: reader.read(z_start=start, z_end=end),
         1: lambda start, end: np.transpose(reader.read(y_start=start, y_end=end), (1, 0, 2)),
@@ -162,11 +120,7 @@ def _write_scroll_slices(reader: FileReader, args, full_res_shape, io_output_typ
     return True
 
 def main():
-    """Entry point that orchestrates reading, conversion, and writing.
-
-    The function determines the correct IO pipeline based on ``--output_type``
-    and streams data in chunks to keep memory usage predictable.
-    """
+    """Entry point that orchestrates reading, conversion, and writing."""
     args = parse_args()
 
     with open(args.config, 'r') as f:
@@ -181,9 +135,8 @@ def main():
         return
 
     logging.info("Starting conversion process.")
-    logging.info(f"Input path: {input_path}")
-    logging.info(f"Output path: {output_path}")
-    logging.info(f"Output type: {output_type_str}")
+    logging.info(f"Input: {input_path}")
+    logging.info(f"Output: {output_path} ({output_type_str})")
 
     memory_limit = config.get("memory_limit", 64)
     transpose = config.get("transpose")
@@ -196,20 +149,17 @@ def main():
 
     resize_shape = config.get("resize_shape")
     full_res_shape = tuple(resize_shape) if resize_shape else reader.volume_shape
-    logging.info(f"Full-resolution shape: {full_res_shape}")
-
+    
     io_output_type = TYPE_MAP.get(output_type_str)
     if io_output_type is None:
         logging.error(f"Unsupported output_type: {output_type_str}")
         return
 
-    # Ensure output directory exists
     Path(output_path).mkdir(parents=True, exist_ok=True)
 
     chunk_size = config.get("chunk_size", 128)
     chunk_tuple = (chunk_size, chunk_size, chunk_size)
 
-    # Wrap config in a simple Namespace-like object for compatibility with helper functions
     class ConfigArgs:
         def __init__(self, **entries):
             self.__dict__.update(entries)
@@ -224,54 +174,13 @@ def main():
     )
 
     if io_output_type in ["ome-zarr", "zarr"]:
-        if not _write_pyramid(reader, helper_args, full_res_shape, chunk_tuple, io_output_type):
-            return
+        _write_pyramid(reader, helper_args, full_res_shape, chunk_tuple, io_output_type)
     elif io_output_type in ["single-tiff", "single-nii"]:
-        if not _write_single_volume(reader, helper_args, full_res_shape, io_output_type):
-            return
+        _write_single_volume(reader, helper_args, full_res_shape, io_output_type)
     elif io_output_type in ["scroll-tiff", "scroll-nii"]:
         _write_scroll_slices(reader, helper_args, full_res_shape, io_output_type)
     else:
         logging.error(f"Unsupported output_type: {output_type_str}")
-        return
-
-    logging.info("Conversion complete.")
-    logging.info(f"Input path: {args.input_path}")
-    logging.info(f"Output path: {args.output_path}")
-    logging.info(f"Output type: {args.output_type}")
-    logging.info(f"Memory limit: {args.memory_limit} GB")
-    if args.transpose:
-        logging.info(f"Transpose order: {tuple(args.transpose)}")
-
-    reader = FileReader(
-        input_path=args.input_path,
-        memory_limit_gb=args.memory_limit,
-        transpose_order=tuple(args.transpose) if args.transpose else None,
-    )
-
-    full_res_shape = tuple(args.resize_shape) if args.resize_shape else reader.volume_shape
-    logging.info(f"Full-resolution shape: {full_res_shape}")
-
-    io_output_type = TYPE_MAP.get(args.output_type)
-    if io_output_type is None:
-        logging.error(f"Unsupported output_type: {args.output_type}")
-        return
-
-    # Ensure output directory exists
-    Path(args.output_path).mkdir(parents=True, exist_ok=True)
-
-    chunk_tuple = (args.chunk_size, args.chunk_size, args.chunk_size)
-
-    if io_output_type in ["ome-zarr", "zarr"]:
-        if not _write_pyramid(reader, args, full_res_shape, chunk_tuple, io_output_type):
-            return
-    elif io_output_type in ["single-tiff", "single-nii"]:
-        if not _write_single_volume(reader, args, full_res_shape, io_output_type):
-            return
-    elif io_output_type in ["scroll-tiff", "scroll-nii"]:
-        _write_scroll_slices(reader, args, full_res_shape, io_output_type)
-    else:
-        logging.error(f"Unsupported output_type: {args.output_type}")
         return
 
     logging.info("Conversion complete.")

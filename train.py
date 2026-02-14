@@ -214,7 +214,7 @@ def main():
     
     model_type = model_config.get("model_type", "monai_unet")
     if model_type == "monai_unet":
-        model_src = os.path.join("models", "UNet", "UNet.py")
+        model_src = os.path.join("models", "UNet.py")
         if os.path.exists(model_src):
             shutil.copy2(model_src, os.path.join(artifact_path, "UNet.py"))
 

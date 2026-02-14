@@ -1,4 +1,4 @@
-from .UNet.UNet import UNet
+from .UNet import UNet
 
 def get_model(model_type, spatial_dims, in_channels, out_channels, **kwargs):
     """

@@ -19,8 +19,8 @@ WORKDIR /workspace
 # Copy application code and modules
 COPY train.py ./
 COPY inference.py ./
-COPY train ./train
-COPY inference ./inference
+COPY converter.py ./
+COPY analysis.py ./
 COPY models ./models
 COPY IO ./IO
 COPY utils ./utils

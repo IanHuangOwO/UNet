@@ -1,166 +1,75 @@
 # Microscopy Segmentation Trainer/Inferencer
 
-Patch-based 2D/3D microscopy image segmentation with MONAI- and PyTorch-based
-training, single-volume inference, and batch inference across a dataset tree.
+High-performance 2D/3D microscopy image segmentation using MONAI, PyTorch, and Shared Memory for efficient processing of massive datasets (150GB+).
 
 ## Features
 
-- Unified dataset: one class for 2D/3D and train/inference (`utils/datasets.py`).
-- UNet 2D/3D models (see `models/`).
-- Training with Dice+BCE loss and Dice metric curves (PNG) saved per run.
-- Sliding-window style inference with patch stitching and multi-format output.
-- Batch inference over `<input_dir>/images/<subfolder>`.
+- **Shared Memory:** Utilizes `torch.multiprocessing` to prevent RAM duplication across workers, critical for large volumes on Windows.
+- **Asynchronous Pipeline:** Optimized inference using a synchronized Disk Manager thread to maximize sequential I/O speed.
+- **Pre-Packed Patches:** Zero-computation inference workers by pre-cropping patches into shared contiguous tensors.
+- **Hybrid Loss:** Focal + Tversky loss to handle extreme class imbalance in sparse microscopy signals.
+- **Global Normalization:** Automatic volume-level Z-score normalization using calculated metadata.
 
-## Install
+## Structure
 
-1) Create a Python 3.10+ environment.
-2) Install requirements:
+- `train.py`: Main training script with functional epoch handlers.
+- `inference.py`: Optimized batch inference script with async Disk Manager.
+- `converter.py`: Utility for format conversion (OME-Zarr, Zarr, Tiff, Nifti).
+- `analysis.py`: Metrics calculation (F1, Precision, Recall) against Ground Truth.
+- `IO/`: Unified readers, writers, and shared-memory dataset classes.
+- `models/`: Model architecture (U-Net) and factory.
+- `utils/`: Numba-optimized stitcher, patch cropper, and visualization tools.
 
-```
-pip install -r requirements.txt
-```
+## Installation
 
-## Docker
+1. Create a Python 3.10+ environment.
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *Note: `numba` is required for optimized stitching.*
 
-The repo includes a GPU-enabled Docker workflow so you only need to mount your data; all code is baked into the image.
+## Docker Workflow
 
-- Image: built from `Dockerfile` (CUDA 12.9, Ubuntu 22.04). Copies `train.py`, `inference.py`, and the `IO/`, `models/`, `utils/`, `train/`, `inference/` packages into the container.
-- Volume: only `./datas` on the host is bind-mounted to `/workspace/datas` inside the container.
-- GPU: requires NVIDIA GPU drivers and the NVIDIA Container Toolkit.
-
-Quick start
-
-- Windows PowerShell: `./run.ps1`
-- macOS/Linux: `bash run.sh`
-- Cross‑platform Python: `python run.py`
-
-What the runner does
-- Generates a temporary `docker-compose.yml` with the single volume mount for `datas/`.
-- Builds the image and starts an interactive container (`bash`) in `/workspace`.
-- On exit (Ctrl+C), stops and removes the container, deletes the generated compose file, and prunes dangling images.
-
-Notes
-- Code changes require a rebuild because code is copied into the image. The runners already use `--build` to rebuild as needed.
-- From Windows Command Prompt (cmd.exe), invoke PowerShell or Bash explicitly, e.g.: `powershell -ExecutionPolicy Bypass -File run.ps1` or `bash run.sh`.
-- Ensure `datas/` exists (the scripts create it if missing).
-
-GPU prerequisites
-- Install recent NVIDIA GPU drivers.
-- Install the NVIDIA Container Toolkit so Docker can access the GPU.
-
-Inside the container
-
-Run training/inference exactly as you would locally, using paths under `/workspace/datas`:
-
-```
-python train.py \
-  --img_path /workspace/datas/<your>/images \
-  --mask_path /workspace/datas/<your>/masks \
-  --save_path /workspace/datas/<your>/weights \
-  --model_name my-model \
-  --training_patch_size 1 64 64
-
-python inference.py \
-  --img_path /workspace/datas/<your>/testing/images \
-  --mask_path /workspace/datas/<your>/testing/results \
-  --model_path /workspace/datas/<your>/weights/my-model.pth \
-  --output_type scroll-tiff \
-  --inference_patch_size 16 64 64
-```
+The repo includes a GPU-enabled Docker runner:
+- Build and run: `python run_docker.py`
+- This mounts `./datas` to `/workspace/datas` and provides an interactive bash shell.
 
 ## Data Layout
 
-Training expects separate image and mask trees with matching subfolders:
+Training and Inference expect volumes organized in subfolders. Standard folders like `Flatten_561` or `images` are automatically discovered.
 
 ```
-<img_root>/01/  <mask_root>/01/
-<img_root>/02/  <mask_root>/02/
-...
+datas/
+  dataset_name/
+    volume_01/
+      Flatten_561/      # Raw images
+      Flatten_561_mask/ # Binary masks (for training)
 ```
-
-Inference/test read volumes from a folder (e.g., a subfolder with TIF stack or
-NIfTI) and write the prediction to a chosen output format.
 
 ## Training
 
-`train.py` auto-selects 2D vs 3D based on the z-size in `--training_patch_size`
-(z>1 → 3D, z==1 → 2D). Example (Windows caret shown; use `\` on Unix):
-
+Configure `configs/config.json` and run:
+```bash
+python train.py --config configs/config.json
 ```
-python train.py ^
-  --img_path ./datas/c-Fos/LI-WIN_PAPER/training-data/100-3D/images ^
-  --mask_path ./datas/c-Fos/LI-WIN_PAPER/training-data/100-3D/masks ^
-  --save_path ./datas/c-Fos/LI-WIN_PAPER/weights ^
-  --model_name func-3 ^
-  --training_epochs 100 ^
-  --training_batch_size 64 ^
-  --training_patch_size 1 64 64 ^
-  --training_overlay 0 16 16 ^
-  --training_resize_factor 1 1 1 ^
-  --visualize_preview
+Outputs are organized into:
+- `visualization/`: Dataset previews and periodic validation results.
+- `weights/`: Best and epoch-named `.pth` checkpoints.
+- `artifacts/`: Training logs, learning curves, and a copy of the model architecture used.
+
+## Inference
+
+High-speed windowed inference for massive volumes:
+```bash
+python inference.py --config configs/config.json
 ```
+The script automatically discovers all `input_name` directories and maintains the folder structure in the `output_path`.
 
-Notes:
-- Loss: Dice+BCE (`train/loss.py:dice_bce_loss`). Trainer logs loss and soft Dice (1−dice_loss).
-- Curves: saved under `--save_path` as `<model_name>-metrics_curve.png`.
+## Evaluation
 
-## Single-Volume Inference
-
-`inference.py` runs inference on one volume. The dimensionality is inferred from
-`--inference_patch_size` (z>1 → 3D).
-
+Calculate metrics against Ground Truth:
+```bash
+python analysis.py --base_dir ./datas/path/to/results --gt_name Flatten_561_mask --pred_prefix Flatten_561_mask_
 ```
-python inference.py \
-  --img_path ./datas/c-Fos/YYC/testing-data/YYC_20230414-1/images \
-  --mask_path ./datas/c-Fos/YYC/testing-data/YYC_20230414-1/results \
-  --model_path ./datas/c-Fos/YYC/weights/c-Fos_200_LI_AN.pth \
-  --output_type scroll-tiff \
-  --inference_patch_size 16 64 64 \
-  --inference_overlay 2 4 4 \
-  --inference_resize_factor 1 1 1
-```
-
-Outputs can be `zarr`, `ome-zarr`, `single-tiff`, `scroll-tiff`, `single-nii`, or `scroll-nii`.
-
-## Batch Inference
-
-`test.py` traverses `<input_dir>/images/<subfolder>` and writes predictions
-under `<input_dir>/masks_{model_stem}/<subfolder>`.
-
-```
-python test.py \
-  --input_dir ./datas/c-Fos/LI-WIN_PAPER/testing-data/V60 \
-  --model_path ./datas/c-Fos/LI-WIN_PAPER/weights/fun-3.pth \
-  --inference_patch_size 16 64 64 \
-  --inference_overlay 2 4 4 \
-  --output_type scroll-tiff
-```
-
-If using `scroll-*` outputs, files are moved up from the temporary
-`<volume_name>_scroll` directory to the subfolder root.
-
-## Scripts
-
-- `run.ps1`: PowerShell runner (Windows). Builds the image, mounts only `datas/`, runs interactive bash, cleans up on exit.
-- `run.sh`: Bash runner (macOS/Linux). Same behavior.
-- `run.py`: Python runner (cross‑platform). Same behavior; auto-detects Compose v2/v1.
-
-Tips on Windows cmd
-- Run PowerShell scripts from cmd via: `powershell -ExecutionPolicy Bypass -File run.ps1`.
-- Run Bash scripts from cmd if Git Bash/WSL is installed via: `bash run.sh`.
-
-## Utilities
-
-- `architecture.py`: Prints a saved model's architecture and parameter counts.
-  - Pickled nn.Module: `python architecture.py /workspace/datas/weights/model.pth --project-root .`
-  - TorchScript: `python architecture.py /workspace/datas/weights/model.ts --jit`
--
-- `metrics.py`: Evaluates predicted masks against ground truth and exports metrics to XLSX (falls back to CSV if openpyxl is missing).
-  - Layout: under `--base_dir`, expects `masks/` (GT) and one or more `masks_<model>/` prediction folders with matching subfolders/files.
-  - Example: `python metrics.py --base_dir ./datas/c-Fos/LI-WIN_PAPER/testing-data/V60`
-  - Output: `metrics.xlsx` with a summary sheet, subfolder breakdown, and per-model sheets with per-image rows.
-
-## Troubleshooting
-
-- Windows: Use PowerShell carets `^` for line continuations as shown.
-- If figures fail to overwrite on Windows, the trainer also saves epoch-named snapshots.
+Outputs a `metrics.xlsx` (or `.csv`) with detailed performance statistics.
