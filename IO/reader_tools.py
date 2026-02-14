@@ -182,7 +182,7 @@ def read_image(
     """
     Unified reader. Returns either:
       - numpy array (if read_to_array=True)
-      - (shape, dtype, size_gb) tuple
+      - (shape, dtype, size_gb, mean, std) tuple
     """
     
     if suffix in (".tif", ".tiff"):
@@ -195,7 +195,21 @@ def read_image(
         reader = _reader_imageio
 
     try:
-        return reader(file_path, read_to_array=read_to_array, transpose_order=transpose_order)
+        result = reader(file_path, read_to_array=read_to_array, transpose_order=transpose_order)
+        if not read_to_array:
+            # result is (shape, dtype, size_gb)
+            # We need to add mean and std. Since we need to calculate them, 
+            # we must read the data if not already provided by the reader.
+            # Most readers currently don't return them.
+            if len(result) == 3:
+                shape, dtype, size_gb = result
+                # To get mean/std, we actually need to load the data.
+                # This might be slow for large files, but it's what's requested.
+                arr = reader(file_path, read_to_array=True, transpose_order=transpose_order)
+                mean = float(np.mean(arr))
+                std = float(np.std(arr))
+                return shape, dtype, size_gb, mean, std
+        return result
     except Exception as e:
         logger.error(f"Error in read_image({file_path}): {e}")
         raise

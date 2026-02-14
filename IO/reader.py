@@ -128,6 +128,8 @@ class FileReader:
         self.volume_shape: tuple
         self.volume_dtype: np.dtype
         self.volume_cumulative_z: list[int] = []
+        self.volume_mean: float = 0.0
+        self.volume_std: float = 0.0
 
         self._get_volume_info()
 
@@ -136,6 +138,8 @@ class FileReader:
         logger.info(f"Volume name: {self.volume_name}")
         logger.info(f"Volume shape: {self.volume_shape}")
         logger.info(f"Volume dtype: {self.volume_dtype}")
+        logger.info(f"Volume mean: {self.volume_mean}")
+        logger.info(f"Volume std: {self.volume_std}")
         
     def read(self, z_start=0, z_end=None, y_start=0, y_end=None, x_start=0, x_end=None):
         """Load a sub-volume defined by Z/Y/X bounds into memory.
@@ -253,24 +257,66 @@ class FileReader:
         self.volume_dtype = entries[0].dtype
         self.volume_sizes = [entry.size_gb for entry in entries]
 
+        self.volume_mean, self.volume_std = self._calculate_aggregate_stats(entries)
+
+    @staticmethod
+    def _calculate_aggregate_stats(entries: list[VolumeMetadata]) -> tuple[float, float]:
+        """Calculate weighted mean and pooled standard deviation across all volume entries.
+
+        Args:
+            entries: List of metadata objects containing per-file stats.
+
+        Returns:
+            tuple[float, float]: The (mean, std) for the combined volume.
+        """
+        total_pixels = 0
+        sum_val = 0.0
+        for entry in entries:
+            n = np.prod(entry.shape)
+            total_pixels += n
+            sum_val += entry.mean * n
+
+        if total_pixels == 0:
+            return 0.0, 0.0
+
+        mean = sum_val / total_pixels
+
+        # Aggregate variance using the law of total variance:
+        # E[X^2] = Var(X) + (E[X])^2
+        sum_sq_val = 0.0
+        for entry in entries:
+            n = np.prod(entry.shape)
+            sum_sq_val += (entry.std**2 + entry.mean**2) * n
+
+        mean_sq = sum_sq_val / total_pixels
+        std = float(np.sqrt(max(0, mean_sq - mean**2)))
+
+        return mean, std
+
     def _collect_volume_metadata(self) -> list[VolumeMetadata]:
         """Gather per-file metadata concurrently for the assembled volume.
 
         Returns:
             list[VolumeMetadata]: Per-file metadata entries including shape,
-            dtype, and estimated size in GiB.
+            dtype, estimated size in GiB, mean, and std.
         """
         metadata: list[VolumeMetadata | None] = [None] * len(self.volume_files)
 
         def process(file: Path, suffix: str) -> VolumeMetadata:
-            shape, dtype, size = read_image(
+            shape, dtype, size, mean, std = read_image(
                 file,
                 suffix,
                 read_to_array=False,
                 transpose_order=self.transpose_order,
             )
             shape_zyx = tuple(int(dim) for dim in shape)  # normalize to ints
-            return VolumeMetadata(shape=shape_zyx, dtype=dtype, size_gb=float(size))
+            return VolumeMetadata(
+                shape=shape_zyx, 
+                dtype=dtype, 
+                size_gb=float(size),
+                mean=float(mean),
+                std=float(std)
+            )
 
         with ThreadPoolExecutor() as executor:
             future_to_idx = {
